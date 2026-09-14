@@ -171,17 +171,14 @@ def run_fusion_for_bam(
 
 def main(argv=None):
     args = parse_args(argv)
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-
     if not args.reference:
         logger.warning(
             "No --reference FASTA provided; fusion transcript reconstruction and soft-clip realignment will be limited."
         )
-
     reports = []
     for bam in args.bam:
         report = run_fusion_for_bam(
@@ -199,7 +196,6 @@ def main(argv=None):
             jitter_window=args.jitter_window,
         )
         reports.append(str(report))
-
     logger.info("Completed fusion detection over %d BAM file(s)", len(reports))
     for report in reports:
         logger.info("Report: %s", report)

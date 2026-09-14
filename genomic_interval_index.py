@@ -1,6 +1,13 @@
 import logging
+from pathlib import Path
 from typing import Optional, List
 from intervaltree import IntervalTree
+import networkx as nx
+
+try:
+    from .transcript_graph import TranscriptGraph
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from transcript_graph import TranscriptGraph
 
 logger = logging.getLogger('IsoQuant')
 
@@ -10,13 +17,15 @@ class GenomicIntervalIndex:
 
     Pre-builds interval trees for genes and exons to eliminate repeated database queries.
     """
-    
+
     def __init__(self, genedb, chromosomes: Optional[List[str]] = None):
         self.db = genedb
         self.gene_trees: dict = {}
         self.exon_trees: dict = {}
         self.chromosomes = set(chromosomes) if chromosomes else None
+        self.transcript_graph = None
         self._build_indices()
+        self._build_transcript_graph()
 
     def _build_indices(self) -> None:
         """Build interval trees for all genes and exons in the database."""
@@ -58,6 +67,21 @@ class GenomicIntervalIndex:
             logger.warning(f"Error building exon index: {e}")
         logger.info(f"Built gene trees for {len(self.gene_trees)} chromosomes with {gene_count} genes")
         logger.info(f"Built exon trees for {len(self.exon_trees)} chromosomes with {exon_count} exons")
+
+    def _build_transcript_graph(self) -> None:
+        """Build and persist a reference transcript graph for the current GTF/GFF DB."""
+        try:
+            db_path = getattr(self.db, "dbfn", None)
+            cache_path = None
+            if db_path:
+                cache_path = f"{db_path}.transcript_graph.pkl"
+            self.transcript_graph = TranscriptGraph.from_reference_db(self.db, cache_path=cache_path, persist=True)
+            logger.info("Built reference transcript graph with %d nodes and %d edges", 
+                        self.transcript_graph.number_of_nodes(), 
+                        self.transcript_graph.number_of_edges())
+        except Exception as exc:
+            logger.warning("Failed to build reference transcript graph: %s", exc)
+            self.transcript_graph = nx.DiGraph()
 
     def get_genes_at(self, chrom: str, pos: int, window: Optional[int] = None) -> list:
         """Return all gene features overlapping ``pos`` (or ``[pos-window, pos+window]``) on ``chrom``."""
