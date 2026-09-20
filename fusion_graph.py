@@ -52,6 +52,11 @@ def parse_args(argv=None):
         help="Reference FASTA used for soft-clip realignment and transcript reconstruction.",
     )
     parser.add_argument(
+        "--transcript-graph-pkl",
+        dest="transcript_graph_pkl",
+        help="Existing persisted reference transcript graph pickle; skips graph rebuilding.",
+    )
+    parser.add_argument(
         "--output",
         default="fusion_output",
         help="Directory for fusion TSV reports (default: fusion_output).",
@@ -121,6 +126,7 @@ def run_fusion_for_bam(
     gendb_path: str,
     reference_fasta: str | None,
     output_dir: str,
+    transcript_graph_pkl: str | None = None,
     min_support: int = 2,
     only_valid: bool = False,
     min_confidence: float = 0.30,
@@ -134,12 +140,19 @@ def run_fusion_for_bam(
     _validate_input(gendb_path, "gffutils database")
     if reference_fasta:
         _validate_input(reference_fasta, "reference FASTA")
+    if transcript_graph_pkl:
+        _validate_input(transcript_graph_pkl, "transcript graph pickle")
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Initializing fusion detector for %s", bam_path)
-    detector = FusionDetector(bam_path, gendb_path, reference_fasta=reference_fasta)
+    detector = FusionDetector(
+        bam_path,
+        gendb_path,
+        reference_fasta=reference_fasta,
+        transcript_graph_path=transcript_graph_pkl,
+    )
 
     detector.detect_fusions(
         min_al_len_primary=min_al_len_primary,
@@ -177,6 +190,7 @@ def main(argv=None):
             gendb_path=args.genedb,
             reference_fasta=args.reference,
             output_dir=args.output,
+            transcript_graph_pkl=args.transcript_graph_pkl,
             min_support=args.min_support,
             only_valid=args.only_valid,
             min_confidence=args.min_confidence,

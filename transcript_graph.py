@@ -120,9 +120,9 @@ class TranscriptGraph(nx.DiGraph):
         if target is None:
             raise ValueError("No cache path configured for transcript graph persistence")
         target.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path = target
         with open(target, "wb") as handle:
             pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        self.cache_path = target
         return str(target)
 
     def load(self, path: Optional[str] = None) -> "TranscriptGraph":
@@ -131,6 +131,8 @@ class TranscriptGraph(nx.DiGraph):
             raise FileNotFoundError(f"Transcript graph cache not found: {target}")
         with open(target, "rb") as handle:
             loaded = pickle.load(handle)
+        if not isinstance(loaded, TranscriptGraph):
+            raise TypeError(f"Pickle does not contain a TranscriptGraph: {target}")
         self.__dict__.update(loaded.__dict__)
         return self
 

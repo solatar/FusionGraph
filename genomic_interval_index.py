@@ -18,11 +18,13 @@ class GenomicIntervalIndex:
     Pre-builds interval trees for genes and exons to eliminate repeated database queries.
     """
 
-    def __init__(self, genedb, chromosomes: Optional[List[str]] = None):
+    def __init__(self, genedb, chromosomes: Optional[List[str]] = None,
+                 transcript_graph_path: Optional[str] = None):
         self.db = genedb
         self.gene_trees: dict = {}
         self.exon_trees: dict = {}
         self.chromosomes = set(chromosomes) if chromosomes else None
+        self.transcript_graph_path = transcript_graph_path
         self.transcript_graph = None
         self._build_indices()
         self._build_transcript_graph()
@@ -71,12 +73,20 @@ class GenomicIntervalIndex:
     def _build_transcript_graph(self) -> None:
         """Build and persist a reference transcript graph for the current GTF/GFF DB."""
         try:
-            db_path = getattr(self.db, "dbfn", None)
-            cache_path = None
-            if db_path:
-                cache_path = f"{db_path}.transcript_graph.pkl"
-            self.transcript_graph = TranscriptGraph.from_reference_db(self.db, cache_path=cache_path, persist=True)
-            logger.info("Built reference transcript graph with %d nodes and %d edges", 
+            if self.transcript_graph_path:
+                self.transcript_graph = TranscriptGraph().load(self.transcript_graph_path)
+                logger.info("Loaded reference transcript graph from %s", self.transcript_graph_path)
+            else:
+                db_path = getattr(self.db, "dbfn", None)
+                cache_path = None
+                if db_path:
+                    cache_path = f"{db_path}.transcript_graph.pkl"
+                self.transcript_graph = TranscriptGraph.from_reference_db(
+                    self.db,
+                    cache_path=cache_path,
+                    persist=True,
+                )
+            logger.info("Reference transcript graph ready with %d nodes and %d edges", 
                         self.transcript_graph.number_of_nodes(), 
                         self.transcript_graph.number_of_edges())
         except Exception as exc:

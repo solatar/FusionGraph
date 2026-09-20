@@ -21,7 +21,8 @@ _CIGAR_CACHE = {}  # cigar_string → aligned_length
 
 
 class FusionDetector:
-    def __init__(self, bam_path: str, gene_db_path: str, reference_fasta: Optional[str]) -> None:
+    def __init__(self, bam_path: str, gene_db_path: str, reference_fasta: Optional[str],
+                 transcript_graph_path: Optional[str] = None) -> None:
         self.bam_path = bam_path
         self.genedb_path = gene_db_path
         self.db = gffutils.FeatureDB(gene_db_path, keep_order=True)
@@ -48,7 +49,10 @@ class FusionDetector:
         # Build interval tree index for fast coordinate-to-gene/exon mapping
         logger.info("Initializing genomic interval index for efficient database queries...")
         if IntervalTree is not None:
-            self.interval_index = GenomicIntervalIndex(self.db)
+            self.interval_index = GenomicIntervalIndex(
+                self.db,
+                transcript_graph_path=transcript_graph_path,
+            )
         else:
             logger.warning("intervaltree not available; falling back to gffutils queries")
             self.interval_index = None
