@@ -8,6 +8,7 @@ import mappy as mp
 from intervaltree import IntervalTree
 from .fusion_validator import FusionValidator
 from .genomic_interval_index import GenomicIntervalIndex
+from .perturbation_score import calculate_perturbation, build_fusion_transcript_graph
 
 logger = logging.getLogger('IsoQuant')
 ANTISENSE_SUFFIX_RE = re.compile(r"-(AS\d+|DT|DIVERGENT|NAT)$", re.IGNORECASE)
@@ -1020,6 +1021,32 @@ class FusionDetector:
             return
         # mark that reconstruction produced a transcript
         meta["reconstruction_ok"] = True
+        try:
+            left_gene = meta.get("left_gene")
+            right_gene = meta.get("right_gene")
+            reference_graph = getattr(self.interval_index, "transcript_graph", None)
+            if reference_graph is not None and left_gene and right_gene and left_gene != right_gene:
+                labeled_exons = [
+                    (c1, start, end, left_gene)
+                    for start, end in left_exons
+                ] + [
+                    (c2, start, end, right_gene)
+                    for start, end in right_exons
+                ]
+                fusion_graph = build_fusion_transcript_graph(
+                    labeled_exons,
+                    left_gene,
+                    right_gene,
+                )
+                _counts, perturbation_score = calculate_perturbation(
+                    reference_graph,
+                    fusion_graph,
+                    left_gene,
+                    right_gene,
+                )
+                meta["perturbation_score"] = perturbation_score
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.debug("Could not calculate perturbation score: %s", exc)
         hits = self.realign_fusion_transcript(fusion_seq)
         if not hits:
             flags["is_valid"] = False
@@ -1214,7 +1241,7 @@ class FusionDetector:
         with open(output_path, "w") as f:
             f.write("LeftGene\tLeftBiotype\tLeftScore\tLeftChromosome\tLeftBreakpoint\t"
                     "RightGene\tRightBiotype\tRightScore\tRightChromosome\tRightBreakpoint\t"
-                    "SupportingReads\tFusionName\tClass\tValid\tConfidence\tReasons\n")
+                    "SupportingReads\tFusionName\tClass\tValid\tConfidence\tPerturbationScore\tReasons\n")
             for meta in sorted(self.fusion_metadata.values(), key=lambda x: -x.get("support", 0)):
                 # Gate 1: Confidence threshold
                 if meta.get("confidence", 0) < min_confidence:
@@ -1244,8 +1271,13 @@ class FusionDetector:
                 left_biotype = meta.get("left_biotype", "unknown")
                 right_biotype = meta.get("right_biotype", "unknown")
                 confidence = meta.get("confidence", 0.0) or 0.0
+                perturbation_score = meta.get("perturbation_score")
+                perturbation_value = (
+                    f"{perturbation_score:.3f}"
+                    if perturbation_score is not None else "NA"
+                )
                 f.write(f"{left_gene}\t{left_biotype}\t{left_score:.2f}\t{left_chr}\t{left_pos}\t"
                         f"{right_gene}\t{right_biotype}\t{right_score:.2f}\t{right_chr}\t{right_pos}\t"
                         f"{meta.get('support', 0)}\t{fusion_name}\t{meta.get('class')}\t"
-                        f"{meta.get('is_valid')}\t{confidence:.3f}\t{reasons}\n")
+                    f"{meta.get('is_valid')}\t{confidence:.3f}\t{perturbation_value}\t{reasons}\n")
 

@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Standalone fusion detection runner.
-Example:
-    python fusion_graph.py \
-        --bam reads.bam \
-        --genedb genes.db \
-        --reference genome.fa \
-        --output fusion_output
-"""
-
 import argparse
 import logging
 import os

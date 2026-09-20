@@ -173,6 +173,7 @@ class TranscriptGraph(nx.DiGraph):
         fusion_edges = len(fusion_graph.fusion_edges())
         return a * novel_junctions + b * skipped_exons + c * inserted_exons + d * fusion_edges
 
+    @classmethod
     def from_fusion_exons(cls, exon_intervals: Sequence[Tuple[str, int, int]], *, gene_name: Optional[str] = None):
         """Create a minimal fusion transcript graph from exon intervals."""
         graph = cls()
