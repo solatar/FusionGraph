@@ -1172,7 +1172,7 @@ class FusionDetector:
                             max_intra_chr_distance: Optional[int] = None,
                             min_confidence_threshold: float = 0.30,
                             low_confidence_support_cutoff: int = 2) -> None:
-        """Run the validation pipeline: gating, classification, reconstruction, and scoring."""
+        """Run candidate gating, classification, and confidence scoring."""
         self.build_metadata(min_support=min_support)
         self._clear_read_level_data()
         # Delegate validation and filtering to FusionValidator
@@ -1210,13 +1210,11 @@ class FusionDetector:
                 g1_name, r1, g2_name, r2,
                 require_gene_names, max_intra_chr_distance
             )
-            # Gate 3: Skip reconstruction for mitochondrial and invalid candidates
+            # Gate 3: Filter mitochondrial candidates without transcript reconstruction.
             is_mito = self._is_mitochondrial_candidate(
                 c1, c2, meta.get("left_gene"), meta.get("right_gene")
             )
-            if flags["is_valid"] and not is_mito:
-                self._attempt_reconstruction_and_realignment(meta, flags, c1, p1, c2, p2)
-            elif is_mito and flags["is_valid"]:
+            if is_mito and flags["is_valid"]:
                 flags["is_valid"] = False
                 flags["reasons"].append("Mitochondrial fusion candidate filtered out")
 
@@ -1283,5 +1281,5 @@ class FusionDetector:
                 f.write(f"{left_gene}\t{left_biotype}\t{left_score:.2f}\t{left_chr}\t{left_pos}\t"
                         f"{right_gene}\t{right_biotype}\t{right_score:.2f}\t{right_chr}\t{right_pos}\t"
                         f"{meta.get('support', 0)}\t{fusion_name}\t{meta.get('class')}\t"
-                    f"{meta.get('is_valid')}\t{confidence:.3f}\t{perturbation_value}\t{reasons}\n")
+                    f"{confidence:.3f}\t{perturbation_value}\t{reasons}\n")
 

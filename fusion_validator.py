@@ -226,15 +226,9 @@ class FusionValidator:
         return g.startswith(prefixes)
 
     def confidence(self, meta: dict, flags: Optional[dict] = None) -> float:
-        """Compute the final confidence score from support, reconstruction, realignment, and priors."""
+        """Compute confidence from support and gene-level priors."""
         # Start from clustered support normalized
         support = min(meta.get("support", 0), 10) / 10.0
-        # Reconstruction bonus
-        recon = 0.2 if meta.get("reconstruction_ok") else 0.0
-        # Realignment bonus: scale by number of hits and MAPQ
-        hits = meta.get("realignment_hits", 0)
-        mapq = meta.get("best_hit_mapq", 0)
-        realign = min(hits, 3) * 0.1 + min(mapq, 30) / 300.0
         # Driver gene bonus vs artifact penalty
         priors = 0.0
         left = meta.get("left_gene")
@@ -244,7 +238,7 @@ class FusionValidator:
                 priors -= 0.30
             if self.is_driver_gene(left) or self.is_driver_gene(right):
                 priors += 0.20
-        conf = max(0.0, min(1.0, support + recon + realign + priors))
+        conf = max(0.0, min(1.0, support + priors))
         return conf
 
     def _merge_fully_identical(self):
