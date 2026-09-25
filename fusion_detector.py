@@ -8,7 +8,11 @@ import mappy as mp
 from intervaltree import IntervalTree
 from .fusion_validator import FusionValidator
 from .genomic_interval_index import GenomicIntervalIndex
-from .perturbation_score import calculate_perturbation, build_fusion_transcript_graph
+from .perturbation_score import (
+    build_fusion_transcript_graph,
+    calculate_perturbation,
+    score_fusion_breakpoint,
+)
 
 logger = logging.getLogger('IsoQuant')
 ANTISENSE_SUFFIX_RE = re.compile(r"-(AS\d+|DT|DIVERGENT|NAT)$", re.IGNORECASE)
@@ -40,6 +44,7 @@ class FusionDetector:
         self.fusion_assigned_pairs = defaultdict(dict)
         # store per-read scores for each fusion key: {fusion_key: {read_name: (left_score, right_score)}}
         self.fusion_read_scores = defaultdict(dict)
+        self._perturbation_score_cache = {}
         # cache for resolved names: id_or_symbol -> gene_symbol (if found)
         self._resolved_name_cache = {}
         # cache for symbol -> biotype mapping (built on-demand)
@@ -82,6 +87,7 @@ class FusionDetector:
         self.fusion_metadata.clear()
         self.fusion_assigned_pairs.clear()
         self.fusion_read_scores.clear()
+        self._perturbation_score_cache.clear()
 
     def _build_exon_cache(self):
         """Cache ordered exon spans for each gene to support exon-boundary and exon-distance calculations.
@@ -1201,8 +1207,34 @@ class FusionDetector:
                 self._update_metadata_flags(meta, flags)
                 continue
 
-            # Perform classification and basic filtering
+            # At this point the candidate has at least min_support reads and a
+            # consensus breakpoint, so estimate topology perturbation without
+            # reconstructing or realigning a transcript.
             c1, p1, c2, p2 = consensus_bp
+            support = int(meta.get("support", 0) or 0)
+            reference_graph = getattr(self.interval_index, "transcript_graph", None)
+            score_cache_key = (
+                meta.get("left_gene"),
+                meta.get("right_gene"),
+                consensus_bp,
+            )
+            if support >= 2 and reference_graph is not None and score_cache_key not in self._perturbation_score_cache:
+                try:
+                    counts, score = score_fusion_breakpoint(
+                        reference_graph,
+                        meta.get("left_gene"), c1, p1,
+                        meta.get("right_gene"), c2, p2,
+                        genomic_index=self.interval_index,
+                    )
+                    self._perturbation_score_cache[score_cache_key] = (score, counts.as_dict())
+                except (TypeError, ValueError, KeyError) as exc:
+                    logger.debug("Could not calculate breakpoint perturbation score: %s", exc)
+                    self._perturbation_score_cache[score_cache_key] = None
+            cached_perturbation = self._perturbation_score_cache.get(score_cache_key)
+            if cached_perturbation is not None:
+                meta["perturbation_score"], meta["perturbation_counts"] = cached_perturbation
+
+            # Perform classification and basic filtering
             g1_name, r1 = self._context_query(c1, p1)
             g2_name, r2 = self._context_query(c2, p2)
             self._apply_classification_and_filters(
@@ -1281,5 +1313,5 @@ class FusionDetector:
                 f.write(f"{left_gene}\t{left_biotype}\t{left_score:.2f}\t{left_chr}\t{left_pos}\t"
                         f"{right_gene}\t{right_biotype}\t{right_score:.2f}\t{right_chr}\t{right_pos}\t"
                         f"{meta.get('support', 0)}\t{fusion_name}\t{meta.get('class')}\t"
-                    f"{confidence:.3f}\t{perturbation_value}\t{reasons}\n")
+                    f"{meta.get('is_valid')}\t{confidence:.3f}\t{perturbation_value}\t{reasons}\n")
 

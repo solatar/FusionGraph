@@ -25,9 +25,7 @@ if __package__ in (None, ""):
 else:
     from .fusion_detector import FusionDetector
 
-
 logger = logging.getLogger("FusionGraph")
-
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(

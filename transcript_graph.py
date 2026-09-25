@@ -5,6 +5,14 @@ from typing import Iterable, Optional, Sequence, Tuple
 import networkx as nx
 
 
+def _graph_node_interval(graph, node):
+    attrs = graph.nodes[node]
+    try:
+        return str(attrs["chrom"]), int(attrs["start"]), int(attrs["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 class TranscriptGraph(nx.DiGraph):
     """Reference transcript graph persisted per GTF/DB input.
 
@@ -58,6 +66,9 @@ class TranscriptGraph(nx.DiGraph):
                     loaded = pickle.load(handle)
                 if isinstance(loaded, cls):
                     loaded.cache_path = Path(cache_path)
+                    indexes_were_added = loaded._ensure_reference_indexes()
+                    if indexes_were_added and persist:
+                        loaded.save()
                     return loaded
             except Exception:
                 pass
@@ -66,6 +77,40 @@ class TranscriptGraph(nx.DiGraph):
         if persist and cache_path:
             graph.save()
         return graph
+
+    def _ensure_reference_indexes(self) -> bool:
+        """Build reusable gene-level indexes for perturbation scoring."""
+        if all(key in self.graph for key in ("_gene_exons", "_gene_junctions", "_gene_transcripts")):
+            return False
+
+        gene_exons = {}
+        gene_junctions = {}
+        gene_transcripts = {}
+        for node, attrs in self.nodes(data=True):
+            gene = attrs.get("gene")
+            if attrs.get("kind") == "transcript" and gene:
+                gene_transcripts.setdefault(gene, []).append(node)
+            elif attrs.get("kind") == "exon" and gene:
+                interval = _graph_node_interval(self, node)
+                if interval is not None:
+                    gene_exons.setdefault(gene, set()).add(interval)
+
+        for source, target, attrs in self.edges(data=True):
+            if attrs.get("kind") != "splice_junction":
+                continue
+            source_attrs = self.nodes[source]
+            target_attrs = self.nodes[target]
+            gene = source_attrs.get("gene")
+            if gene and gene == target_attrs.get("gene"):
+                source_interval = _graph_node_interval(self, source)
+                target_interval = _graph_node_interval(self, target)
+                if source_interval is not None and target_interval is not None:
+                    gene_junctions.setdefault(gene, set()).add((source_interval, target_interval))
+
+        self.graph["_gene_exons"] = gene_exons
+        self.graph["_gene_junctions"] = gene_junctions
+        self.graph["_gene_transcripts"] = gene_transcripts
+        return True
 
     def _build_reference_graph(self, db) -> "TranscriptGraph":
         self.clear()
@@ -111,6 +156,7 @@ class TranscriptGraph(nx.DiGraph):
                         self.add_edge(prev_exon, exon_key, kind="splice_junction")
                     prev_exon = exon_key
 
+        self._ensure_reference_indexes()
         if self.cache_path:
             self.save()
         return self

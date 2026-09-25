@@ -1,5 +1,3 @@
-"""Perturbation metrics for reconstructed two-partner fusion transcripts."""
-
 from dataclasses import dataclass, asdict
 from typing import Any, Optional, Sequence, Tuple
 
@@ -11,6 +9,11 @@ except ImportError:  # pragma: no cover - direct script execution fallback
 
 ExonInterval = Tuple[str, int, int]
 LabeledExonInterval = Tuple[str, int, int, str]
+
+
+def _ensure_reference_indexes(graph: TranscriptGraph) -> None:
+    if hasattr(graph, "_ensure_reference_indexes"):
+        graph._ensure_reference_indexes()
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,10 @@ def _node_interval(graph: TranscriptGraph, node: Any) -> Optional[ExonInterval]:
 
 
 def _exon_intervals(graph: TranscriptGraph, gene: str) -> set[ExonInterval]:
+    _ensure_reference_indexes(graph)
+    cached = graph.graph.get("_gene_exons")
+    if cached is not None:
+        return cached.get(gene, set())
     return {
         interval
         for node in graph.exon_nodes()
@@ -62,6 +69,10 @@ def _exon_intervals(graph: TranscriptGraph, gene: str) -> set[ExonInterval]:
 
 
 def _reference_junctions(graph: TranscriptGraph, gene: str) -> set[tuple[ExonInterval, ExonInterval]]:
+    _ensure_reference_indexes(graph)
+    cached = graph.graph.get("_gene_junctions")
+    if cached is not None:
+        return cached.get(gene, set())
     junctions = set()
     for source, target, attrs in graph.edges(data=True):
         if attrs.get("kind") != "splice_junction":
@@ -154,6 +165,127 @@ def _observed_junctions(graph: TranscriptGraph, gene: str):
             junctions.add((source_interval, target_interval))
     return junctions
 
+
+def _breakpoint_transcript_path(
+    reference_graph: TranscriptGraph,
+    gene: str,
+    chrom: str,
+    position: int,
+    keep_prefix: bool,
+    anchor_interval: Optional[ExonInterval] = None,
+) -> list[ExonInterval]:
+    """Return the retained transcript side ending or starting at a breakpoint exon."""
+    _ensure_reference_indexes(reference_graph)
+    transcript_index = reference_graph.graph.get("_gene_transcripts")
+    if transcript_index is None:
+        transcript_index = {}
+        for transcript, attrs in reference_graph.nodes(data=True):
+            if attrs.get("kind") == "transcript":
+                transcript_index.setdefault(attrs.get("gene"), []).append(transcript)
+        reference_graph.graph["_gene_transcripts"] = transcript_index
+
+    candidates = []
+    for transcript in transcript_index.get(gene, []):
+        exons = [
+            node for node in reference_graph.successors(transcript)
+            if reference_graph.nodes[node].get("kind") == "exon"
+        ]
+        exons.sort(key=lambda node: (reference_graph.nodes[node].get("start", 0),
+                                     reference_graph.nodes[node].get("end", 0)))
+        hit_index = None
+        for index, exon in enumerate(exons):
+            exon_attrs = reference_graph.nodes[exon]
+            exon_interval = _node_interval(reference_graph, exon)
+            if anchor_interval is not None and exon_interval == anchor_interval:
+                hit_index = index
+                break
+            if (anchor_interval is None
+                    and str(exon_attrs.get("chrom")) == str(chrom)
+                    and int(exon_attrs.get("start", 0)) <= position <= int(exon_attrs.get("end", 0))):
+                hit_index = index
+                break
+        if hit_index is None:
+            continue
+        intervals = [_node_interval(reference_graph, exon) for exon in exons]
+        intervals = [interval for interval in intervals if interval is not None]
+        if keep_prefix:
+            retained = intervals[:hit_index + 1]
+        else:
+            retained = intervals[hit_index:]
+        if retained:
+            candidates.append(retained)
+
+    if not candidates:
+        raise ValueError(f"No transcript exon overlaps {gene} at {chrom}:{position}")
+    # Prefer the transcript retaining the most exonic sequence around the breakpoint.
+    return max(candidates, key=lambda path: (len(path), sum(end - start + 1 for _, start, end in path)))
+
+
+def score_fusion_breakpoint(
+    reference_graph: TranscriptGraph,
+    left_gene: str,
+    left_chrom: str,
+    left_position: int,
+    right_gene: str,
+    right_chrom: str,
+    right_position: int,
+    genomic_index=None,
+    **weights: float,
+) -> tuple[PerturbationCounts, float]:
+    """Score a two-partner fusion using only its consensus breakpoint.
+
+    The breakpoint is interpreted as a retained prefix of the left partner and
+    retained suffix of the right partner. This is a topology estimate, not a
+    reconstructed transcript, and requires both breakpoints to overlap exons.
+    """
+    if left_gene == right_gene or not left_gene or not right_gene:
+        raise ValueError("score_fusion_breakpoint requires two distinct partner genes")
+
+    def nearest_exon(gene: str, chrom: str, position: int) -> ExonInterval:
+        partner_exons = {
+            interval
+            for interval in _exon_intervals(reference_graph, gene)
+            if interval[0] == str(chrom)
+        }
+        for window in (0, 500, 2000):
+            candidates = [
+                interval for interval in partner_exons
+                if (interval[1] <= position <= interval[2])
+                or min(abs(position - interval[1]), abs(position - interval[2])) <= window
+            ]
+            if candidates:
+                return min(
+                    candidates,
+                    key=lambda interval: min(
+                        abs(position - interval[1]),
+                        abs(position - interval[2]),
+                    ),
+                )
+        raise ValueError(f"No exon within 2000 bp of {chrom}:{position}")
+
+    left_anchor = nearest_exon(left_gene, left_chrom, int(left_position))
+    right_anchor = nearest_exon(right_gene, right_chrom, int(right_position))
+    left_path = _breakpoint_transcript_path(
+        reference_graph, left_gene, left_chrom, int(left_position),
+        keep_prefix=True, anchor_interval=left_anchor,
+    )
+    right_path = _breakpoint_transcript_path(
+        reference_graph, right_gene, right_chrom, int(right_position),
+        keep_prefix=False, anchor_interval=right_anchor,
+    )
+    labeled_intervals = [
+        (*interval, left_gene) for interval in left_path
+    ] + [
+        (*interval, right_gene) for interval in right_path
+    ]
+    fusion_graph = build_fusion_transcript_graph(labeled_intervals, left_gene, right_gene)
+    return calculate_perturbation(
+        reference_graph,
+        fusion_graph,
+        left_gene,
+        right_gene,
+        **weights,
+    )
 
 def calculate_perturbation(
     reference_graph: TranscriptGraph,

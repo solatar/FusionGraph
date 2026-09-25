@@ -75,6 +75,8 @@ class GenomicIntervalIndex:
         try:
             if self.transcript_graph_path:
                 self.transcript_graph = TranscriptGraph().load(self.transcript_graph_path)
+                if self.transcript_graph._ensure_reference_indexes():
+                    self.transcript_graph.save(self.transcript_graph_path)
                 logger.info("Loaded reference transcript graph from %s", self.transcript_graph_path)
             else:
                 db_path = getattr(self.db, "dbfn", None)
