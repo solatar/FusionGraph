@@ -66,9 +66,6 @@ class TranscriptGraph(nx.DiGraph):
                     loaded = pickle.load(handle)
                 if isinstance(loaded, cls):
                     loaded.cache_path = Path(cache_path)
-                    indexes_were_added = loaded._ensure_reference_indexes()
-                    if indexes_were_added and persist:
-                        loaded.save()
                     return loaded
             except Exception:
                 pass
@@ -156,7 +153,6 @@ class TranscriptGraph(nx.DiGraph):
                         self.add_edge(prev_exon, exon_key, kind="splice_junction")
                     prev_exon = exon_key
 
-        self._ensure_reference_indexes()
         if self.cache_path:
             self.save()
         return self

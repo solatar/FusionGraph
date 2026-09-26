@@ -11,9 +11,46 @@ ExonInterval = Tuple[str, int, int]
 LabeledExonInterval = Tuple[str, int, int, str]
 
 
-def _ensure_reference_indexes(graph: TranscriptGraph) -> None:
-    if hasattr(graph, "_ensure_reference_indexes"):
-        graph._ensure_reference_indexes()
+def _ensure_gene_indexes(graph: TranscriptGraph, genes) -> None:
+    """Index only the two genes needed for the current fusion score."""
+    gene_exons = graph.graph.setdefault("_gene_exons", {})
+    gene_junctions = graph.graph.setdefault("_gene_junctions", {})
+    gene_transcripts = graph.graph.setdefault("_gene_transcripts", {})
+    for gene in genes:
+        if gene in gene_exons and gene in gene_junctions and gene in gene_transcripts:
+            continue
+        transcripts = []
+        exons = set()
+        junctions = set()
+        if gene in graph and graph.nodes[gene].get("kind") == "gene":
+            transcripts = [
+                node for node in graph.successors(gene)
+                if graph.nodes[node].get("kind") == "transcript"
+            ]
+        else:
+            transcripts = [
+                node for node, attrs in graph.nodes(data=True)
+                if attrs.get("kind") == "transcript" and attrs.get("gene") == gene
+            ]
+        for transcript in transcripts:
+            transcript_exons = [
+                node for node in graph.successors(transcript)
+                if graph.nodes[node].get("kind") == "exon"
+            ]
+            transcript_exons.sort(key=lambda node: (graph.nodes[node].get("start", 0),
+                                                    graph.nodes[node].get("end", 0)))
+            intervals = []
+            for exon in transcript_exons:
+                interval = _node_interval(graph, exon)
+                if interval is not None:
+                    exons.add(interval)
+                    intervals.append((exon, interval))
+            for (source, source_interval), (target, target_interval) in zip(intervals, intervals[1:]):
+                if graph.has_edge(source, target):
+                    junctions.add((source_interval, target_interval))
+        gene_exons[gene] = exons
+        gene_junctions[gene] = junctions
+        gene_transcripts[gene] = transcripts
 
 
 @dataclass(frozen=True)
@@ -55,7 +92,7 @@ def _node_interval(graph: TranscriptGraph, node: Any) -> Optional[ExonInterval]:
 
 
 def _exon_intervals(graph: TranscriptGraph, gene: str) -> set[ExonInterval]:
-    _ensure_reference_indexes(graph)
+    _ensure_gene_indexes(graph, (gene,))
     cached = graph.graph.get("_gene_exons")
     if cached is not None:
         return cached.get(gene, set())
@@ -69,7 +106,7 @@ def _exon_intervals(graph: TranscriptGraph, gene: str) -> set[ExonInterval]:
 
 
 def _reference_junctions(graph: TranscriptGraph, gene: str) -> set[tuple[ExonInterval, ExonInterval]]:
-    _ensure_reference_indexes(graph)
+    _ensure_gene_indexes(graph, (gene,))
     cached = graph.graph.get("_gene_junctions")
     if cached is not None:
         return cached.get(gene, set())
@@ -175,7 +212,7 @@ def _breakpoint_transcript_path(
     anchor_interval: Optional[ExonInterval] = None,
 ) -> list[ExonInterval]:
     """Return the retained transcript side ending or starting at a breakpoint exon."""
-    _ensure_reference_indexes(reference_graph)
+    _ensure_gene_indexes(reference_graph, (gene,))
     transcript_index = reference_graph.graph.get("_gene_transcripts")
     if transcript_index is None:
         transcript_index = {}

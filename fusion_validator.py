@@ -226,9 +226,21 @@ class FusionValidator:
         return g.startswith(prefixes)
 
     def confidence(self, meta: dict, flags: Optional[dict] = None) -> float:
-        """Compute confidence from support and gene-level priors."""
+        """Compute confidence from support, perturbation, and gene-level priors.
+
+        Perturbation contributes a bounded positive bonus only when a score is
+        available. Missing (``NA``) scores contribute zero rather than a penalty.
+        """
         # Start from clustered support normalized
         support = min(meta.get("support", 0), 10) / 10.0
+        perturbation_score = meta.get("perturbation_score")
+        perturbation_bonus = 0.0
+        if perturbation_score is not None:
+            try:
+                perturbation_score = max(0.0, float(perturbation_score))
+                perturbation_bonus = 0.20 * perturbation_score / (1.0 + perturbation_score)
+            except (TypeError, ValueError):
+                perturbation_bonus = 0.0
         # Driver gene bonus vs artifact penalty
         priors = 0.0
         left = meta.get("left_gene")
@@ -238,7 +250,7 @@ class FusionValidator:
                 priors -= 0.30
             if self.is_driver_gene(left) or self.is_driver_gene(right):
                 priors += 0.20
-        conf = max(0.0, min(1.0, support + priors))
+        conf = max(0.0, min(1.0, support + perturbation_bonus + priors))
         return conf
 
     def _merge_fully_identical(self):
